@@ -1,0 +1,313 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <ctype.h>
+#include <gmp.h>
+#include <math.h>
+#define MAX_DATA 101
+#define MAX_STR_LEN 20
+#define MAX_LINE 1024
+
+const char *get_string(mpq_t value)
+{
+    return mpq_get_str(NULL, 10, value);
+}
+
+//Calculate the constants using divided difference.
+//y[j] = (y[j] - y[j+1]) / (x[j] - x[j+i])
+void DDTable(mpq_t x[], mpq_t y[], int n, mpq_t b[])
+{
+    mpq_t temp_x;
+    mpq_init(temp_x);
+    mpq_set(b[0], y[0]);
+
+    for (int i = 1; i < n; i++)
+    {
+        for (int j = 0; j < n - i; j++)
+        {
+            mpq_sub(y[j], y[j], y[j + 1]);
+            mpq_canonicalize(y[j]); //Simplify the fraction
+            mpq_set(temp_x, x[j]);
+            mpq_sub(temp_x, x[j], x[j + i]);
+            mpq_canonicalize(temp_x); //Simplify the fraction
+            mpq_div(y[j], y[j], temp_x);
+            mpq_canonicalize(y[j]); //Simplify the fraction
+
+        }
+        mpq_set(b[i], y[0]);
+    }
+    mpq_clear(temp_x);
+}
+
+//sum= y[0][i] + (x - x_value) * sum --- Horner’s method
+void formula(mpq_t eval_x, mpq_t x[], mpq_t b[], int n, mpq_t sum)
+{
+    mpq_t temp_x;
+    mpq_init(temp_x);
+    mpq_set(sum, b[n - 1]);
+    for (int i = n - 2; i >= 0; i--)
+    {
+        mpq_set(temp_x, eval_x);
+        mpq_sub(temp_x, temp_x, x[i]);
+        mpq_canonicalize(temp_x); //Simplify the fraction
+        mpq_mul(sum, sum, temp_x);
+        mpq_canonicalize(sum); //Simplify the fraction
+        mpq_add(sum, sum, b[i]);
+        mpq_canonicalize(sum); //Simplify the fraction
+    }
+    mpq_clear(temp_x);
+}
+
+void printPoly(mpq_t x[], mpq_t b[], int n, mpq_t value)
+{
+    for (int i = 0; i < n; i++)
+    {
+        printf("\nP%d(X)=\n",i);
+        for (int j = 0; j <= i; j++)
+        {
+            for (int k = 0; k < j; k++)
+            {
+                printf("(x-%s)", get_string(x[k]));
+            }
+            if(j < i){
+                printf("%s+", get_string(b[j]));
+            }
+            else{
+                printf("%s", get_string(b[j]));
+            }
+
+
+        }
+        printf("\n");
+    }
+}
+
+
+//power function
+long power(int base, int exp)
+{
+    if (exp == 1)
+    {
+        return base;
+    }
+    return base * power(base, exp - 1);
+}
+
+//Find the length of leading non-whitespace
+int len_non_whitespace(char str[])
+{
+    for (int i = 0; i < strlen(str); i++)
+    {
+        if (isspace(str[i]))
+        {
+            return i;
+        }
+    }
+    return strlen(str);
+}
+
+//Split the data which is already splitted by split_division using "." as the delimiter
+void split_decimal(char data[], long long int *numerator, long long int *denominator, int is_first_time)
+{
+    char *token = strtok(data, ".");
+    long long int temp_numerator = strtoll(token, NULL, 10);
+    long long int temp_denominator = 1;
+    token = strtok(NULL, ".");
+    if (token != NULL)
+    {
+        temp_denominator = power(10, len_non_whitespace(token));
+        temp_numerator = temp_numerator * temp_denominator + strtoll(token, NULL, 10);
+    }
+    if (is_first_time)
+    {
+        *numerator = temp_numerator;
+        *denominator = temp_denominator;
+    }
+    else
+    {
+        *numerator *= temp_denominator;
+        *denominator *= temp_numerator;
+    }
+}
+
+void split_division(char data[], long long int *numerator, long long int *denominator, mpq_t value)
+{
+    int i = 0;
+    char splitted_data[MAX_DATA][MAX_STR_LEN];
+    char *token = strtok(data, "/");
+    while (token != NULL)
+    {
+        strcpy(splitted_data[i++], token);
+        token = strtok(NULL, "/");
+    }
+    split_decimal(splitted_data[0], numerator, denominator, 1);
+    for (int j = 1; j < i; j++)
+    {
+        split_decimal(splitted_data[j], numerator, denominator, 0);
+    }
+    if (*denominator < 0)
+    {
+        *denominator *= -1;
+        *numerator *= -1;
+    }
+    mpq_set_si(value, *numerator, *denominator);
+}
+
+//Split 2 lines of CSV into an array of String and return N
+/*Text file format must be:
+x1,x2,x3...
+y1,y2,y3…**/
+int split_csv(char file_name[], char x_string[][MAX_STR_LEN], char y_string[][MAX_STR_LEN])
+{
+    FILE *fp = fopen(file_name, "r");
+    char line[MAX_LINE];
+    size_t len = 0;
+    int i = 0;
+    if (fp == NULL)
+    {
+        perror("Unable to open file!");
+    }
+    fgets(line, MAX_LINE, fp);
+    char *token = strtok(line, ",");
+    while (token != NULL)
+    {
+        strcpy(x_string[i++], token);
+        token = strtok(NULL, ",");
+    }
+    i = 0;
+    fgets(line, MAX_LINE, fp);
+    token = strtok(line, ",");
+    while (token != NULL)
+    {
+        strcpy(y_string[i++], token);
+        token = strtok(NULL, ",");
+    }
+
+    fclose(fp);
+    return i;
+}
+void location(mpq_t x[], mpq_t location)
+{
+    double temp2;
+    mpq_t temp, temp1;
+    mpq_inits(temp, temp1, NULL);
+    double decDiff;
+    long long int temp_numerator,temp_denominator;
+    //Split location into integer and decimal
+    decDiff = modf(mpq_get_d(location), &temp2);
+    int index = (int)temp2;
+    // assign double decDiff to temp1
+    mpq_set_d(temp1, decDiff);
+
+    //Until here
+    int int1 = index, int2 = index + 1;
+
+    //Calculate difference of x
+    printf("x[%d]=%s\tx[%d]=%s\n", int1,get_string(x[int1]),int2,get_string(x[int2]));
+    mpq_sub(temp, x[int2], x[int1]);
+    mpq_canonicalize(temp); //Simplify the fraction
+    printf("Difference = %s\n", get_string(temp));
+    mpq_mul(temp, temp, temp1);
+    mpq_canonicalize(temp); //Simplify the fraction
+    mpq_add(location, x[int1], temp);
+    mpq_canonicalize(location); //Simplify the fraction
+}
+
+int main()
+{
+    struct timespec start, finish, ddstart, ddfinish;
+    double elapsed;
+    int n;
+    long long int temp_numerator, temp_denominator;
+    mpq_t y[MAX_DATA], x[MAX_DATA], b[MAX_DATA], eval_x, result,temp_y[MAX_DATA];
+    char x_string[MAX_DATA][MAX_STR_LEN], y_string[MAX_DATA][MAX_STR_LEN];
+    char file_name[MAX_STR_LEN];
+
+    //<----CSV Parser---->
+    printf("Enter your CSV file: ");
+    scanf("%s", file_name);
+    n = split_csv(file_name, x_string, y_string);
+    printf("n = %d\n", n);
+
+    for (int i = 0; i < n; i++)
+    {
+        mpq_inits(x[i], y[i], b[i],temp_y[i], NULL);
+    }
+    mpq_inits(eval_x, result, NULL);
+
+    //<----x coordinate---->
+    printf("x\n");
+    for (int i = 0; i < n; i++)
+    {
+        split_division(x_string[i], &temp_numerator, &temp_denominator, x[i]);
+        temp_numerator = temp_denominator = 0;
+        mpq_canonicalize(x[i]); //Simplify the fraction
+        printf("%s\n", get_string(x[i]));
+    }
+
+    //<----y coordinate---->
+    printf("y\n");
+    for (int i = 0; i < n; i++)
+    {
+        split_division(y_string[i], &temp_numerator, &temp_denominator, y[i]);
+        temp_numerator = temp_denominator = 0;
+        mpq_canonicalize(y[i]); //Simplify the fraction
+        mpq_set(temp_y[i], y[i]);
+        printf("%s\n", get_string(y[i]));
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &ddstart); //start clock
+
+    DDTable(x, temp_y, n, b);
+
+    clock_gettime(CLOCK_MONOTONIC, &ddfinish); //start clock
+    for (int i = 0; i < n; i++)
+    {
+        printf("b%d=%lf\n",i,mpq_get_d(b[i]));
+    }
+
+    char x_value[MAX_STR_LEN],choice;
+
+   do
+    {
+        printf("Enter x for x value or l for location:");
+        scanf("\n%c", &choice);
+        if (choice == 'x')
+        {
+            printf("Enter your x value:");
+            scanf("%s", x_value);
+	clock_gettime(CLOCK_MONOTONIC, &start); //start clock
+            split_division(x_value, &temp_numerator, &temp_denominator, eval_x);
+        }
+        else if (choice == 'l')
+        {
+            printf("Enter your location value:");
+            scanf("%s", x_value);
+	clock_gettime(CLOCK_MONOTONIC, &start); //start clock
+
+            split_division(x_value, &temp_numerator, &temp_denominator, eval_x);
+            mpq_canonicalize(eval_x);
+            if (mpz_get_d(mpq_denref(eval_x)) != 1)
+            {
+                location(x, eval_x);
+                mpq_canonicalize(eval_x); //Simplify the fraction
+            }
+            else
+            {
+                //if location is an integer, it will bypass the location function
+                mpq_set(eval_x, x[mpz_get_si(mpq_numref(eval_x))]);
+            }
+        }else if(choice == 'q'){
+            break;
+        }
+        formula(eval_x, x, b, n, result);
+        printPoly(x, b, n, eval_x);
+        printf("Value at x=%s is %s\n", get_string(eval_x), get_string(result));
+        printf("Value at x=%f is %f\n", mpq_get_d(eval_x), mpq_get_d(result));
+clock_gettime(CLOCK_MONOTONIC, &finish); //start clock
+        elapsed = (finish.tv_sec - start.tv_sec + ddfinish.tv_sec - ddstart.tv_sec);
+        elapsed += (finish.tv_nsec - start.tv_nsec + ddfinish.tv_sec - ddstart.tv_sec) / 1000000000.0;
+        printf("\nTime taken to run program: %lf seconds\n", elapsed);
+    } while (choice != 'q');
+}
